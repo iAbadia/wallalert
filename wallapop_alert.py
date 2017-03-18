@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import demiurge, sys, getopt, os, pickle, tempfile
+import demiurge, sys, getopt, os, pickle, tempfile, time
 
 urlWallapop = 'http://es.wallapop.com'
 urlWallapopMobile = 'http://p.wallapop.com/i/'
-SAVE_LOCATION = os.path.join(tempfile.gettempdir(), 'alertWallapop.pkl')
+SAVE_LOCATION = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'alertWallapop.pkl')
+HISTORY_SIZE = 20   
 data_save = True
 push_bullet = False
-
-# Query params
-_minPrice = "" # Min query price [0..20000]. Empty for no minPrice
-_maxPrice = "" # Max query price [0..20000]. Empty for no maxPrice
-_dist = "0_" # "0_" -> No limit, "0_10000" -> My town (10km), "0_5000" -> My area (5km), "0_1000" -> Neaby (1km)
-_order = "creationDate-dec" # "distance-asc" -> Near first, "salePrice-asc" -> Cheap first, "salePrice-des" -> Expensive first, "creationDate-des" -> New first
-_kws = "" # Plus-separated query words (E.g. gameboy+color+pokemon)
-_lat = "1.234567" # Latitude in signed degrees format w/ 6 decimals (E.g. 1.234567)
-_lng = "-7.654321" # Longitude in signed degrees format w/ 6 decimals (E.g. -7.654321)
+debug = True
 
 # Notify params
 pushToken = '<your token here>'
 email = '<your email here>'
+
+# Debug
+def printD(str, good):
+    # If ok, print +, else -
+    global debug
+    if debug:
+        if good:
+            print('[+] ' + str)
+        else:
+            print('[-] ' + str)
+
 
 # Demiurge for get products in Wallapop
 class Products(demiurge.Item):
@@ -41,14 +45,14 @@ def sendPushBullet(pushToken, email, title, body, url):
     command = "curl -X POST -H 'Access-Token: {pushToken}' -F 'type=link' -F 'title={title}' -F 'body={body}' -F 'url={url}' -F 'email={email}' 'https://api.pushbullet.com/v2/pushes'".format(pushToken = pushToken, email=email, title=title, body=body, url=url)
     os.system(command)
 
-def wallAlert(urlSearch):
+def wallAlert(urlSearch, notify):
     # Load after data search
     data_temp = []
     try:
         dataFile = open(SAVE_LOCATION, 'rb')
         data_save = pickle.load(dataFile)
     except:
-        data_save = open(SAVE_LOCATION, 'wb')
+        data_save = open(SAVE_LOCATION, 'wb+')
         pickle.dump(data_temp, data_save)
         pass
 
@@ -57,8 +61,8 @@ def wallAlert(urlSearch):
 
     for item in results:
         data_temp.append({'title': item.title
-                          , 'price': item.price
-                          , 'relativeUrl': item.url })
+                        , 'price': item.price
+                        , 'relativeUrl': item.url })
 
     # Check new items
     list_news = []
@@ -76,31 +80,38 @@ def wallAlert(urlSearch):
         productID = url.split("-")[-1]
         applink = urlWallapopMobile + productID
 
-        # Send Alert
-        print(title, body, url)
-        print('-' * 10)
-        if push_bullet:
-            sendPushBullet(pushToken, email, title, body, applink)
-    print(data_save)
+        # Notify, if needed
+        if notify:
+            # Send Alert
+            printD(title + body + url, True)
+            printD('-' * 10, True)
+            if push_bullet:
+                sendPushBullet(pushToken, email, title, body, applink)
     # Save data
     data_save = open(SAVE_LOCATION, 'wb')
     pickle.dump(data_temp, data_save)
 
-
 def usage():
-    print ("Usage:", __file__," -k <keywords> -m <min price> -x <max price> -d <distance> -l <latitude> -g <longitude>")
+    print("Usage:", __file__," -k keywords [-m min price] [-x max price] [-d distance] [-l latitude] [-g longitude]")
+    print('Ex:   ', __file__,' -k "ps4 games" -m 10 -x 15 -d "0_1000" -l "40.4378693" -g "-3.819963"') 
+    print('')
     optionsHelp()
 
 def optionsHelp():
+    print('   KEYWORDS')
     print('     -k : Keywords. E.g. "gameboy pokemon"')
+    print('   PRICE')
     print('     -m : Min price [0..20000]. Default: no limit')
     print('     -x : Max price [0..20000]. Default: no limit')
+    print('   SCOPE')
     print('     -d : Distance [0_ -> no limit, 0_10000 -> 10km, 0_5000 -> 5km, 0_1000 -> 1km]. Default: no limit')
+    #print('     -o : Order. [distance-asc -> Near first, salePrice-asc -> Cheap first, salePrice-des -> Expensive first, creationDate-des -> New first]. Default: creationDate-des')
+    print('   LOCATION')
     print('     -l : Latitude. Default: 40.4378693')
     print('     -g : Longitude. Default: -3.819963')
 
 def extractArguments(argv):
-
+    # Default values
     _minPrice = ""
     _maxPrice = ""
     _dist = "0_"
@@ -109,13 +120,14 @@ def extractArguments(argv):
     _lat = "40.4378693"
     _lng = "-3.819963"
 
+    # Get opts
     try:
         opts, args = getopt.getopt(argv, "k:m:x:d:l:g:o:")
-
     except getopt.GetoptError:
         usage()
         sys.exit(2)
-
+    
+    # Parse opts
     for opt, arg in opts:
         _kws = arg if opt in ("-k") else _kws
         _minPrice = arg if opt in ("-m") else _minPrice
@@ -124,7 +136,8 @@ def extractArguments(argv):
         _order = arg if opt in ("-o") else _order
         _lat = arg if opt in ("-l") else _lat
         _lng = arg if opt in ("-g") else _lng
-    
+
+    # Check min reqs (keywords)
     if not _kws:
         usage()
         sys.exit(2)
@@ -136,7 +149,7 @@ def main(argv):
     # Process command line arguments
     _kws, _minPrice, _maxPrice, _dist, _order, _lat, _lng = extractArguments(argv)
 
-    print ("Searching", _kws)
+    printD("Searching for: " + _kws, True)
     urlSearch = ('http://es.wallapop.com/search?'
                 'kws=' + _kws + '&'
                 'minPrice=' + _minPrice + '&'
@@ -146,8 +159,16 @@ def main(argv):
                 'lat=' + _lat + '&'
                 'lng=' + _lng
     )
-    wallAlert(urlSearch)
+
+    printD('URL: ' + urlSearch, True)
+
+    # Fill DB
+    wallAlert(urlSearch, True)
+
+    # Query every 30 secs
+    #while True:
+     #   wallAlert(urlSearch, True)
+      #  time.sleep(30)
 
 if __name__ == "__main__":
     main(sys.argv[1:])
-
